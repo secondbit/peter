@@ -2,6 +2,7 @@ package peter
 
 import (
 	"secondbit.org/wendy"
+	"sort"
 	"sync"
 )
 
@@ -55,8 +56,49 @@ func (p *parentMap) remove(id wendy.NodeID, t Topic) {
 	return
 }
 
-func (p *parentMap) list(id wendy.NodeID) []Topic {
+func (p *parentMap) topicsByID(id wendy.NodeID) []Topic {
 	p.RLock()
 	defer p.RUnlock()
 	return p.items[id]
+}
+
+func (p *parentMap) topics() []Topic {
+	p.RLock()
+	defer p.RUnlock()
+	topics := []Topic{}
+	for _, t := range p.items {
+		topics = append(topics, t...)
+	}
+	tmpTopics := topicSlice(topics)
+	sort.Sort(tmpTopics)
+	topics = []Topic(tmpTopics)
+	result := []Topic{}
+	for i, topic := range topics {
+		if i > 0 && topic == topics[i-1] {
+			continue
+		}
+		result = append(result, topic)
+	}
+	return result
+}
+
+func (p *parentMap) ids() []wendy.NodeID {
+	p.RLock()
+	defer p.RUnlock()
+	keys := []wendy.NodeID{}
+	for key, _ := range p.items {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func (p *parentMap) export() map[wendy.NodeID][]Topic {
+	output := map[wendy.NodeID][]Topic{}
+	p.RLock()
+	defer p.RUnlock()
+	for id, topics := range p.items {
+		output[id] = make([]Topic, len(output[id]), (cap(output[id])+1)*2)
+		copy(output[id], topics)
+	}
+	return output
 }

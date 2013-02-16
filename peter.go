@@ -21,6 +21,12 @@ const (
 
 type Topic string
 
+type topicSlice []Topic
+
+func (t topicSlice) Len() int           { return len(t) }
+func (t topicSlice) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
+func (t topicSlice) Less(i, j int) bool { return t[i] < t[j] }
+
 type Peter struct {
 	subscriptions *subscriptionMap
 	parents       *parentMap
@@ -170,12 +176,32 @@ func (p *Peter) OnNewLeaves(leafset []*wendy.Node) {
 
 // OnNodeJoin fulfills the wendy.Application interface, and will be called whenever a Node leaves the Cluster. Peter will detect which topics would use that Node as a parent in the subscription tree, and re-subscribe to those topics to repair the subscription tree.
 func (p *Peter) OnNodeJoin(node wendy.Node) {
-	// TODO: call wendy.Route on each topic, and if it returns the joined Node, resubscribe
+	topics := p.parents.topics()
+	for _, topic := range topics {
+		key, err := wendy.NodeIDFromBytes([]byte(string(topic)))
+		if err != nil {
+			p.err(err.Error())
+		}
+		target, err := p.cluster.Route(key)
+		if err != nil {
+			p.err(err.Error())
+		}
+		if node.ID.Equals(target.ID) {
+			err = p.Unsubscribe(topic)
+			if err != nil {
+				p.err(err.Error())
+			}
+			err = p.Subscribe(topic)
+			if err != nil {
+				p.err(err.Error())
+			}
+		}
+	}
 }
 
 // OnNodeExit fulfills the wendy.Application interface, and will be called whenever a Node leaves the Cluster. Peter will re-subscribe to any topics that Node was responsible for updating the current Node about, repairing the subscription tree.
 func (p *Peter) OnNodeExit(node wendy.Node) {
-	topics := p.parents.list(node.ID)
+	topics := p.parents.topicsByID(node.ID)
 	for _, topic := range topics {
 		err := p.Subscribe(topic)
 		if err != nil {
