@@ -2,6 +2,8 @@ package peter
 
 import (
 	"encoding/hex"
+	"log"
+	"os"
 	"secondbit.org/wendy"
 )
 
@@ -11,12 +13,20 @@ const (
 	MSG_EVENT       = byte(19)
 )
 
+const (
+	LogLevelDebug = iota
+	LogLevelWarn
+	LogLevelError
+)
+
 type Topic string
 
 type Peter struct {
 	subscriptions *subscriptionMap
 	parents       *parentMap
 	cluster       *wendy.Cluster
+	logLevel      int
+	log           *log.Logger
 }
 
 // New creates a new instance of Peter, complete with a Node and the underlying Wendy Cluster, and registers itself to receive callbacks from the Cluster events.
@@ -25,7 +35,10 @@ func New(id wendy.NodeID, localIP, globalIP, region string, port int) *Peter {
 	cluster := wendy.NewCluster(node, nil)
 	peter := &Peter{
 		subscriptions: newSubscriptionMap(),
+		parents:       newParentMap(),
 		cluster:       cluster,
+		log:           log.New(os.Stdout, "peter("+id.String()+") ", log.LstdFlags),
+		logLevel:      LogLevelWarn,
 	}
 	cluster.RegisterCallback(peter)
 	return peter
@@ -113,12 +126,12 @@ func (p *Peter) OnForward(msg *wendy.Message, nextId wendy.NodeID) bool {
 		if inserted {
 			t, err := hex.DecodeString(msg.Key.String())
 			if err != nil {
-				// TODO: Logging?
+				p.err(err.Error())
 				return false
 			}
 			err = p.Subscribe(Topic(t))
 			if err != nil {
-				// TODO: Logging?
+				p.err(err.Error())
 				return false
 			}
 			// Prevent the message from continuing
@@ -131,12 +144,12 @@ func (p *Peter) OnForward(msg *wendy.Message, nextId wendy.NodeID) bool {
 			if empty {
 				t, err := hex.DecodeString(msg.Key.String())
 				if err != nil {
-					// TODO: Logging?
+					p.err(err.Error())
 					return false
 				}
 				err = p.Unsubscribe(Topic(t))
 				if err != nil {
-					// TODO: Logging?
+					p.err(err.Error())
 					return false
 				}
 			}
@@ -166,7 +179,7 @@ func (p *Peter) OnNodeExit(node wendy.Node) {
 	for _, topic := range topics {
 		err := p.Subscribe(topic)
 		if err != nil {
-			// TODO: Have some error reporting
+			p.err(err.Error())
 		}
 	}
 	p.subscriptions.removeSubscriber(node.ID)
@@ -179,4 +192,46 @@ func (p *Peter) OnHeartbeat(node wendy.Node) {
 func (p *Peter) notifySubscribers(t Topic) error {
 	// TODO: fan out notification to each subscriber
 	return nil
+}
+
+// SetLogger sets the log.Logger that Peter and its underlying cluster will write to.
+func (p *Peter) SetLogger(l *log.Logger) {
+	p.log = l
+}
+
+// SetLogLevel sets the level of logging that will be written to the Logger. It will be mirrored to the cluster.
+//
+// Use peter.LogLevelDebug to write to the most verbose level of logging, helpful for debugging.
+//
+// Use peter.LogLevelWarn (the default) to write on events that may, but do not necessarily, indicate an error.
+//
+// Use peter.LogLevelError to write only when an event occurs that is undoubtedly an error.
+func (p *Peter) SetLogLevel(level int) {
+	p.logLevel = level
+	switch level {
+	case LogLevelDebug:
+		p.cluster.SetLogLevel(wendy.LogLevelDebug)
+	case LogLevelWarn:
+		p.cluster.SetLogLevel(wendy.LogLevelWarn)
+	case LogLevelError:
+		p.cluster.SetLogLevel(wendy.LogLevelError)
+	}
+}
+
+func (p *Peter) debug(format string, v ...interface{}) {
+	if p.logLevel <= LogLevelDebug {
+		p.log.Printf(format, v...)
+	}
+}
+
+func (p *Peter) warn(format string, v ...interface{}) {
+	if p.logLevel <= LogLevelWarn {
+		p.log.Printf(format, v...)
+	}
+}
+
+func (p *Peter) err(format string, v ...interface{}) {
+	if p.logLevel <= LogLevelError {
+		p.log.Printf(format, v...)
+	}
 }
